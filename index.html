@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reverse Palette Importer</title>
+    <!-- Discord fanciness -->
+    <meta content="Reverse Palette Importer" property="og:title" />
+    <meta content='Build a fraytool palette file from set of images' property="og:description" />
+    <meta content="https://psndth.github.io/ReversePaletteImporter/" property="og:url" />
+    <!--Fonts -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poiret+One|Raleway:400,300,600,700">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <!-- Styles and script-->
+    <link rel="stylesheet" href="main.css">
+    <script type="module">
+        import {showOpenFilePicker} from 'https://cdn.jsdelivr.net/npm/file-system-access/+esm'
+        import 'https://cdn.jsdelivr.net/npm/file-system-access/lib/polyfillDataTransferItem.js'
+        const can_modify_fs = ("showOpenFilePicker"  in window);
+        if (!can_modify_fs) {
+            window.showOpenFilePicker = showOpenFilePicker;
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.0/FileSaver.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jimp/browser/lib/jimp.min.js"></script>
+    <script src="script.js"></script>
+</head>
+
+<body>
+    <h1>Reverse Palette Editor</h1>
+    <div class="desc">
+        <h2>Instructions</h2>
+        <p>
+            First, create a base palette/colour mapped image. Then apply your desired palettes using your favourite graphics editor. The name of the palette will match the filename of the palette images. Each image should be identical aside from colours used. After opening in fraytools you can set the image to be the base sprite. <b>The base palette is created automatically, don't upload that image twice</b>
+        </p>
+    </div>
+    <button id="start_base_sprite">Put Base Sprite Here</button>
+    <button id="start_palette_sprite">Put Palette Sprites Here</button>
+    <p class="desc" id="result"></p>
+</body>
+
+</html>

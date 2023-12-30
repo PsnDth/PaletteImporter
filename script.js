@@ -256,15 +256,14 @@ window.addEventListener("load", (e) => {
             result_box.classList = "desc info_resp";
             result_box.textContent = "Successfully parsed base sprite. Add other palette images to complete process.";
             palette_button.disabled = false;
-            handleBaseInput(); // Wait again on success
         })
         .catch((err) => {
             base_button.disabled = false;
             result_box.textContent = `${err}`;
             result_box.classList = "desc error_resp";
             console.error(err);
-            handleBaseInput(); // Wait again on failure
-        });
+        })
+        .finally(handleBaseInput); // Setup listening for new input on fail/success
     }
     function handlePaletteInput() {
 
@@ -283,15 +282,16 @@ window.addEventListener("load", (e) => {
             result_box.textContent = "Successfully parsed palette from images";
             base_button.disabled = false;
             palette_button.disabled = true;
-            handlePaletteInput(); // Wait again on success
+            base_button.textContent = "Put Base Sprite Here";
+            palette_button.textContent = "Put Palette Sprites Here";
         })
         .catch((err) => {
             palette_button.disabled = false;
-            result_box.textContent = `ERROR: ${err}`;
+            result_box.textContent = `${err}`;
             result_box.classList = "desc error_resp";
-            console.error(`Found error: ${err}`);
-            handlePaletteInput(); // Wait again on failure
-        });
+            console.error(err);
+        })
+        .finally(handlePaletteInput); // Setup listening for new input on fail/success
     }
 
     palette_button.disabled = true;

@@ -105,6 +105,11 @@ class PaletteParser {
                 if (dst_pixels[i+ColorDims.ALPHA] == 0) return; // Ignore transparent pixels
                 const src_color = this.base_image[i/4];
                 const dst_color = ColorParser.RGBAtoARGBHex(...dst_pixels.slice(i, i+4));
+                if (src_color === undefined || !this.colors.has(src_color)) {
+                    reject(`Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map transparent/unmapped colour to RGBA(${new ColorParser(dst_color).rgba})`);
+                    found_err = true;
+                    return;
+                }
                 if (curr_palette.has(src_color) && curr_palette.get(src_color) != dst_color) {
                     reject(`Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map RGBA(${new ColorParser(src_color).rgba}) to RGBA(${new ColorParser(dst_color).rgba}). Previously mapped to RGBA(${new ColorParser(curr_palette.get(src_color)).rgba})`);
                     found_err = true;

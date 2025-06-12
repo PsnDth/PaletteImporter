@@ -46,16 +46,224 @@ function basename(name) {
     return name.replace(/\.[^/.]+$/, "")
 }
 
-class PaletteParser {
-    static GEN_FILENAME = "costumes.palettes"
+class ColorInfo {
     static DEFAULT_COLOR_NAME = "Untitled Palette Color"
+    constructor(id, color, name, pluginMetadata) {
+        this.id = id; 
+        this.color = color;
+        this.name = name || ColorInfo.DEFAULT_COLOR_NAME;
+        this.pluginMetadata  = pluginMetadata || {};
+    }
+
+    static colorToString(color) {
+        return "0x" + color.toString(16).padStart(8, "0").toUpperCase();
+    }
+
+    colorStr() {
+        return ColorInfo.colorToString(this.color);
+    }
+
+    static findByID(color_map, id) {
+        for (const [color, color_info] of color_map.entries()) {
+            if (color_info.id == id) return color_info;
+        }
+        return null;
+    }
+
+    static fromJSON(info) {
+        return new ColorInfo(info["$id"], parseInt(info["color"]), info["name"], info["pluginMetadata"]);
+    }
+
+    toJSON() {
+        return {
+            "$id": this.id,
+            "color": this.colorStr(),
+            "name": this.name,
+            "pluginMetadata": this.pluginMetadata
+        }
+    }
+}
+
+class PaletteInfo {
+    constructor(name, id, pluginMetadata, isBase = false) {
+        this.id = id || crypto.randomUUID();
+        this.name = name;
+        this.map = new Map();
+        this.pluginMetadata  = pluginMetadata ||  {
+            "com.fraymakers.FraymakersMetadata": {
+                "isBase": isBase
+            }
+        };
+    }
+
+    markAsBase(isBase) {
+        if (this.pluginMetadata && this.pluginMetadata["com.fraymakers.FraymakersMetadata"]) {
+            this.pluginMetadata["com.fraymakers.FraymakersMetadata"].isBase = isBase;
+        }
+    }
+
+    isBase() {
+        if (this.pluginMetadata && this.pluginMetadata["com.fraymakers.FraymakersMetadata"]) {
+            return this.pluginMetadata["com.fraymakers.FraymakersMetadata"].isBase;
+        }
+        return false;
+    }
+
+    static fromJSON(info, color_map) {
+        const palette_info = new PaletteInfo(info["name"], info["$id"], info["pluginMetadata"]);
+        for (const entry of info.colors) {
+            palette_info.map.set(
+                ColorInfo.findByID(color_map, entry.paletteColorId).color,
+                parseInt(entry.targetColor),
+            );
+        }
+        return palette_info;
+    }
+
+
+    toJSON(color_map) {
+        const palette_map = {
+            "$id": this.id,
+            "colors": [],
+            "name": this.name,
+            "pluginMetadata": this.pluginMetadata
+        };
+        for (const [src_color, dst_color] of this.map.entries()) {
+            palette_map.colors.push({
+                "paletteColorId": color_map.get(src_color).id,
+                "targetColor": ColorInfo.colorToString(dst_color),
+            });
+        }
+        return palette_map;
+    }
+}
+
+class PaletteParser {
+    static DEFAULT_FILENAME = "costumes.palettes"
 
     constructor() {
+        this.base_image_file = null;
+        this.palette_image_files = [];
+        this.base_palette_json_file = null;
+        this.palette_json_files = [];
+        this.reset();
+    }
+
+    reset() {
         this.colors = new Map(); // maps color to ID
         this.palettes = new Map();
         this.base_image = null;
         this.base_size = [0, 0];
-     }
+        this.palette_json_template = {
+            "export": true,
+            "imageAsset": "",
+            "id": "",
+            "pluginMetadata": {
+                "com.fraymakers.FraymakersMetadata": {
+                "version": "0.1.2"
+                }
+            },
+            "plugins": [
+                "com.fraymakers.FraymakersMetadata"
+            ],
+            "tags": [],
+            "version": 1
+        };
+    }
+
+    async reapplyFiles() {
+        this.reset();
+        if (this.base_palette_json_file) await this.addBasePaletteFile(this.base_palette_json_file);
+        if (this.base_image_file) {
+            await this.addBaseSprite(this.base_image_file);
+            if (this.palette_image_files.length) await this.addPaletteSprites(this.palette_image_files);
+        }
+        if (this.palette_json_files.length) await this.addPaletteFiles(this.palette_json_files);
+    }
+
+    static getPaletteCopyName(name, copy_idx) {
+        if (copy_idx <= 0) return name;
+        if (copy_idx == 1) return `${name} (copy)`;
+        return `${name} (copy ${copy_idx - 1})`;
+    }
+
+    addPaletteSafely(name, palette) {
+            var copy_idx = 0;
+        while (this.palettes.has(PaletteParser.getPaletteCopyName(name, copy_idx))) {
+            copy_idx += 1;
+        }
+        name = PaletteParser.getPaletteCopyName(name, copy_idx);
+        palette.name = name;
+        this.palettes.set(name, palette);
+    }
+
+    async loadPaletteFile(fhandle) {
+        const reader = new FileReader(); 
+        const file = await fhandle.getFile();
+        return new Promise((resolve, reject) => {
+            reader.onload = (event) => {
+                try {
+                    resolve(JSON.parse(event.target.result));
+                } catch (e) {
+                    if (e instanceof SyntaxError) {
+                        reject(`${file} is not a valid palette file.`);
+                    } else {
+                        reject(e.target.result);
+                    }
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsText(file);
+        });
+    }
+
+    async addPaletteFile(fhandle, is_base = false) {
+       const palette_json = await this.loadPaletteFile(fhandle);
+       var old_colors = new Map(this.colors);
+       if (is_base) this.colors.clear();
+       for (const color_json of palette_json.colors) {
+           const color_info = ColorInfo.fromJSON(color_json);
+           if (this.colors.has(color_info.color)) continue;
+           this.colors.set(color_info.color, color_info);
+        }
+        // readd the old colors
+        for (const [color, color_info] of old_colors.entries()) {
+            if (this.colors.has(color)) continue;
+            this.colors.set(color, color_info);
+        }
+
+        var old_palettes = new Map(this.palettes);
+        // Add the base palettes first
+        if (is_base) this.palettes.clear();
+        for (const palette_map_json of palette_json.maps) {
+            const palette_info = PaletteInfo.fromJSON(palette_map_json, this.colors);
+            this.addPaletteSafely(palette_info.name, palette_info);
+        }
+        if (is_base) {
+            // Re-add the old_palettes
+            for (const [name, palette] of old_palettes.entries()) {
+                this.addPaletteSafely(name, palette);
+            }
+
+            // also copy over things into the json template
+            const{colors, maps, ...cleaned_palette_json} = palette_json;
+            this.palette_json_template = cleaned_palette_json;
+        }
+    }
+
+    async addBasePaletteFile(fhandle) {
+        const IS_BASE = true;
+        await this.addPaletteFile(fhandle, IS_BASE);
+        this.base_palette_json_file = fhandle;
+        this.filename = fhandle.name;
+    }
+
+    async addPaletteFiles(fhandles) {
+        for await (const fhandle of fhandles) {
+            await this.addPaletteFile(fhandle);
+        }
+        this.palette_json_files = fhandles;
+    }
 
     async loadImage(fhandle) {
         const img_reader = new FileReader(); 
@@ -65,7 +273,6 @@ class PaletteParser {
             img_reader.onerror = reject;
             img_reader.readAsArrayBuffer(img_file);
         });
-
     }
 
     async addBaseSprite(fhandle) {
@@ -82,9 +289,10 @@ class PaletteParser {
                 const src_color = ColorParser.RGBAtoARGBHex(...pixels.slice(i, i+4));
                 this.base_image[i/4] = src_color;
                 if (!this.colors.has(src_color)) {
-                    this.colors.set(src_color, crypto.randomUUID());
+                    this.colors.set(src_color, new ColorInfo(crypto.randomUUID(), src_color));
                 }
             });
+            this.base_image_file = fhandle;
             resolve(this);
         });
     }
@@ -94,8 +302,9 @@ class PaletteParser {
         const pal_sprite = await this.loadImage(fhandle);
         const img =  await Jimp.read(pal_sprite);
         return new Promise((resolve, reject) => {
-            if (img.bitmap.width != this.base_size[0] || img.bitmap.height != this.base_size[1])
-                return reject(`Palette file "${name}" has the wrong file dimensions compared to base sprite`);
+            if (img.bitmap.width != this.base_size[0] || img.bitmap.height != this.base_size[1]) {
+                return reject(`Palette file "${name}" has the wrong file dimensions compared to base sprite. Base dimensions: ${this.base_size[0]}x${this.base_size[1]}; Current dimensions: ${img.bitmap.width}x${img.bitmap.height}`);
+            }
 
             const dst_pixels = img.bitmap.data;
             let found_err = false;
@@ -118,7 +327,9 @@ class PaletteParser {
                 curr_palette.set(src_color, dst_color);
             });
             if (found_err) return;
-            this.palettes.set(name, curr_palette);
+            const palette_info = new PaletteInfo(name);
+            palette_info.map = curr_palette;
+            this.addPaletteSafely(name, palette_info);
             resolve(this);
         });
     }
@@ -127,186 +338,294 @@ class PaletteParser {
         for await (const fhandle of fhandles) {
             await this.addPaletteSprite(fhandle);
         }
+        this.palette_image_files = fhandles;
     }
 
-    async download() {
+    canDownloadPalettes() {
+        return (this.base_image_file && this.palette_image_files.length > 0) || this.palette_json_files.length > 0;
+    }
+
+    download() {
+        const filename = this.filename || PaletteParser.DEFAULT_FILENAME;
         let palette_json = {
-            "export": true,
-            "guid": crypto.randomUUID(),
-            "colors": [],
-            "maps": [],
-            "imageAsset": "",
-            "id": "",
-            "pluginMetadata": {
-                "com.fraymakers.FraymakersMetadata": {
-                "version": "0.1.2"
-                }
-            },
-            "plugins": [
-                "com.fraymakers.FraymakersMetadata"
-            ],
-            "tags": [],
-            "version": 1
+            ...{colors: [], maps: [], guid: crypto.randomUUID(), },
+            ...this.palette_json_template,
         };
 
-        function asStr(color) {
-            return "0x" + color.toString(16).padStart(8, "0").toUpperCase();
-        }
-        let base_map_colors_json = [];
-        for (const [color, color_id] of this.colors.entries()) {
-            const color_str = asStr(color);
-            palette_json.colors.push({
-                "$id": color_id,
-                "color": color_str,
-                "name": PaletteParser.DEFAULT_COLOR_NAME,
-                "pluginMetadata": {}
-            });
-            base_map_colors_json.push({
-                "paletteColorId": color_id,
-                "targetColor": color_str
-            });
-        }
-        palette_json.maps.push({
-            "$id": crypto.randomUUID(),
-            "colors": base_map_colors_json,
-            "name": "Base",
-            "pluginMetadata": {
-                "com.fraymakers.FraymakersMetadata": {
-                    "isBase": true
-                }
-            },
-        });
-        
-        for (const [name, palette] of this.palettes.entries()) {
-            const palette_map = {
-                "$id": crypto.randomUUID(),
-                "colors": [],
-                "name": name,
-                "pluginMetadata": {
-                    "com.fraymakers.FraymakersMetadata": {
-                        "isBase": false
-                    }
-                }
-            };
-            for (const [src_color, dst_color] of palette.entries()){
-                palette_map.colors.push({
-                    "paletteColorId": this.colors.get(src_color),
-                    "targetColor": asStr(dst_color)
-                });
+        palette_json.colors = [...this.colors.values().map(color_info => color_info.toJSON())];
+        if (this.palettes.values().find(palette_info => palette_info.isBase()) === undefined) {
+            for (const palette_info of this.palettes.values()) {
+                palette_info.markAsBase(true);
+                break;
             }
-            palette_json.maps.push(palette_map);
+        } 
+        palette_json.maps = [...this.palettes.values().map(palette_info => palette_info.toJSON(this.colors))];
+        saveAs(new Blob([JSON.stringify(palette_json, null, 2)], {type: "application/octet-stream"}), filename);
+    }
+}
+
+class InputHandler {
+    static IMAGES_ONLY = {
+        description: "Images",
+        accept: {
+            "image/*": [".png", ".gif", ".jpeg", ".jpg"],
+        },
+        excludeAcceptAllOption: true
+    };
+    static PALETTE_FILES_ONLY = {
+        description: "Fraytools Palette Files",
+        accept: {
+            "application/json": [".palettes"],
+        },
+    };
+
+    constructor(parser) {
+        this.parser = parser;
+
+        this.base_sprite_button = document.getElementById("start_base_sprite");
+        this.palette_sprite_button = document.getElementById("start_palette_sprite");
+        this.palette_file_button = document.getElementById("start_palette_file");
+        this.palette_ext_button = document.getElementById("start_palette_ext");
+        this.export_button = document.getElementById("export");
+        this.buttons = [
+            this.base_sprite_button,
+            this.palette_sprite_button,
+            this.palette_file_button,
+            this.palette_ext_button,
+            this.export_button,
+        ];
+        this.old_button_states = this.buttons.map(b => b.disabled);
+    }
+
+    disableAll() {
+        this.buttons.forEach(b => {b.disabled = true});
+    }
+
+    async doParserTask(task, params) {
+        // Prevent user interaction
+        this.old_button_states = this.buttons.map(b => b.disabled);
+        this.disableAll();
+        
+        
+        try {
+            await task(params);
+            this.buttons.forEach((b, i) => {b.disabled = this.old_button_states[i]});
+        } catch (e) {
+            this.buttons.forEach((b, i) => {b.disabled = this.old_button_states[i]});
+            throw e;
         }
-        saveAs(new Blob([JSON.stringify(palette_json, null, 2)], {type: "application/octet-stream"}), `costumes.palettes`);
+        // Allow user interaction again
     }
-}
 
-async function getDraggedItems(items) {
-    var entries = [];
-    for (const item of items) {
-        if (item.kind != "file") throw "Error: Dragged input was not a file, expecting image file(s)";
-        const entry = await item.getAsFileSystemHandle(); 
-        if (entry.kind != "file") throw "Error: Dragged input was not a file, expecting image file(s)";
-        entries.push(entry);
-    } 
-    return entries;
-}
 
-window.addEventListener("load", (e) => {
-    
-    const result_box = document.getElementById("result");
-    const base_button = document.getElementById("start_base_sprite");
-    const palette_button = document.getElementById("start_palette_sprite");
-    const can_modify_fs = ("showOpenFilePicker"  in window);
-    if (!can_modify_fs) {
-        base_button.disabled = true;
-        palette_button.disabled = true;
-        result_box.textContent = "Can't access the filesystem directly with this browser 😢. Try using something chromium ...";
-        result_box.classList = "desc error_resp";
-        console.error(`showOpenFilePicker is not supported in this browser`);
-        return;
+
+    checkEnableExport() {
+        this.export_button.disabled = !this.parser.canDownloadPalettes();
+        if (this.export_button.disabled) {
+            console.log(`Can't export because has_images=${(this.parser.base_image_file && this.parser.palette_image_files.length > 0)} has_files=${this.parser.palette_json_files.length > 0}`);
+        }
     }
-    async function handleClickOrDrag(button) {
+
+    static async getDraggedItems(items) {
+        var entries = [];
+        for (const item of items) {
+            if (item.kind != "file") throw "Error: Dragged input was not a file, expecting image file(s)";
+            const entry = await item.getAsFileSystemHandle(); 
+            if (entry.kind != "file") throw "Error: Dragged input was not a file, expecting image file(s)";
+            entries.push(entry);
+        } 
+        return entries;
+    }
+
+    static async handleClickOrDrag(button, fileType) {
         return new Promise((resolve, reject) => {
             const dropListener = async (e) => {
                 if (button.disabled) return;
-                resolve(getDraggedItems(e.dataTransfer.items));
+                resolve(InputHandler.getDraggedItems(e.dataTransfer.items));
             }
             button.addEventListener("click", async (e) => {
-                window.showOpenFilePicker({ id: "s", mode: "read", multiple: true, types: [{
-                    description: "Images",
-                    accept: {
-                        "image/*": [".png", ".gif", ".jpeg", ".jpg"],
-                    },
-                }]}).then(resolve);
+                window.showOpenFilePicker({ id: "s", mode: "read", multiple: true, types: [fileType]}).then(resolve).catch((err) => {
+                    if (err instanceof DOMException && err.name == "AbortError") {
+                        reject("No file selected, please try again.");
+                    } else {
+                        reject(err);
+                    }
+                });
                 button.removeEventListener("drop", dropListener);
             }, {once: true});
             button.addEventListener("drop", dropListener, {once: true});
         });
     }
 
+    initPaletteSpriteInputs() {    
+        const result_box = document.getElementById("palette_image_status");
+        const handleBaseInput =  () => {
+            InputHandler.handleClickOrDrag(this.base_sprite_button, InputHandler.IMAGES_ONLY).then((inp) => {
+                // Update button name
+                if (inp.length != 1) throw `Error: Expected 1 Base Sprite image, got ${inp.length} files.`;
+                this.base_sprite_button.textContent = `Base Sprite: ${inp[0].name}`;
+                result_box.classList = "desc info_resp";
+                result_box.textContent = "Parsing base sprite ....";
+                return inp[0];
+            })
+            .then(fh => {
+                return this.doParserTask(async f => {
+                    this.parser.base_image_file = null;
+                    await this.parser.reapplyFiles();
+                    await this.parser.addBaseSprite(f);
+                }, fh);
+            })
+            .then(() => {
+                this.checkEnableExport();
+                result_box.classList = "desc info_resp";
+                result_box.textContent = "Successfully parsed base sprite. Add other palette images to complete process.";
+                this.base_sprite_button.disabled = false;
+                this.palette_sprite_button.disabled = false;
+            })
+            .catch((err) => {
+                this.checkEnableExport();
+                this.base_sprite_button.disabled = false;
+                result_box.textContent = `${err}`;
+                result_box.classList = "desc error_resp";
+                console.error(err);
+            })
+            .finally(handleBaseInput); // Setup listening for new input on fail/success
+        }
+        const handlePaletteInput = () => {
+            InputHandler.handleClickOrDrag(this.palette_sprite_button, InputHandler.IMAGES_ONLY).then((inp) => {
+                // Update button name
+                this.palette_sprite_button.textContent = `${inp.length} Palette Sprite(s)`;
+                result_box.classList = "desc info_resp";
+                result_box.textContent = "Parsing palette sprites ....";
+                // before actually adding them,  reset the parser if necessary
+                return inp;
+            })
+            .then(fh => {
+                return this.doParserTask(async f => {
+                    if (this.parser.palette_image_files.length) {
+                        this.parser.palette_image_files = [];
+                        await this.parser.reapplyFiles();
+                    }
+                    await this.parser.addPaletteSprites(f);
+                }, fh);
+            })
+            .then(() => {
+                this.checkEnableExport();
+                result_box.classList = "desc success_resp";
+                result_box.textContent = "Successfully parsed palette from images";
+            })
+            .catch((err) => {
+                this.checkEnableExport();
+                this.palette_sprite_button.disabled = false;
+                result_box.textContent = `${err}`;
+                result_box.classList = "desc error_resp";
+                console.error(err);
+            })
+            .finally(handlePaletteInput); // Setup listening for new input on fail/success
+        }
 
+        this.palette_sprite_button.disabled = true;
+        handleBaseInput();
+        handlePaletteInput();
+    }
+
+    initPaletteFileInputs() {
+        const result_box = document.getElementById("palette_file_status");
+        const handleBaseInput = () => {
+            InputHandler.handleClickOrDrag(this.palette_file_button, InputHandler.PALETTE_FILES_ONLY).then((inp) => {
+                // Update button name
+                if (inp.length != 1) throw `Error: Expected 1 Target Palette file, got ${inp.length} files.`;
+                this.palette_file_button.textContent = `Target Palette: ${inp[0].name}`;
+                result_box.classList = "desc info_resp";
+                result_box.textContent = "Parsing target palette file ....";
+                return inp[0];
+            })
+            .then(fh => {
+                return this.doParserTask(async f => {
+                    this.parser.base_palette_json_file = null;
+                    this.parser.reapplyFiles();
+                    await this.parser.addBasePaletteFile(f);
+                }, fh);
+            })
+            .then(() => {
+                this.checkEnableExport();
+                result_box.classList = "desc success_resp";
+                result_box.textContent = "Successfully parsed target palette file";
+            })
+            .catch((err) => {
+                this.checkEnableExport();
+                result_box.textContent = `${err}`;
+                result_box.classList = "desc error_resp";
+                console.error(err);
+            })
+            .finally(handleBaseInput); // Setup listening for new input on fail/success
+        }
+        const handlePaletteInput = () => {
+            InputHandler.handleClickOrDrag(this.palette_ext_button, InputHandler.PALETTE_FILES_ONLY).then((inp) => {
+                this.palette_ext_button.textContent = `${inp.length} Palette File(s)`;
+                result_box.classList = "desc info_resp";
+                result_box.textContent = "Parsing palette files ....";
+                // before actually adding them,  reset the parser if necessary
+                return inp;
+            })
+            .then(fh => {
+                return this.doParserTask(async f => {
+                    if (this.parser.palette_json_files.length) {
+                        this.parser.palette_json_files = [];
+                        await this.parser.reapplyFiles();
+                    }
+                    await this.parser.addPaletteFiles(f);
+                }, fh);
+            })
+            .then(() => {
+                this.checkEnableExport();
+                result_box.classList = "desc success_resp";
+                result_box.textContent = "Successfully parsed palettes from provided files";
+            })
+            .catch((err) => {
+                this.checkEnableExport();
+                result_box.textContent = `${err}`;
+                result_box.classList = "desc error_resp";
+                console.error(err);
+            })
+            .finally(handlePaletteInput); // Setup listening for new input on fail/success
+        }
+        handleBaseInput();
+        handlePaletteInput();
+    }
+
+    initExportButton() {
+        this.export_button.addEventListener("click", (e) => {
+            if (this.export_button.disabled) return;
+            this.parser.download();
+        });
+        this.checkEnableExport();
+    }
+
+    init() {
+        this.initPaletteSpriteInputs();
+        this.initPaletteFileInputs();
+        this.initExportButton();
+    }
+}
+
+window.addEventListener("load", (e) => {
+    const global_result_box = document.getElementById("result");
+    const input_handler = new InputHandler();
+    const can_modify_fs = ("showOpenFilePicker"  in window);
+    if (!can_modify_fs) {
+        input_handler.disableAll();
+        global_result_box.textContent = "Can't access the filesystem directly with this browser 😢. Try using something chromium ...";
+        global_result_box.classList = "desc error_resp";
+        console.error(`showOpenFilePicker is not supported in this browser`);
+        return;
+    }
     const parser = new PaletteParser();
-    function handleBaseInput() {
-        handleClickOrDrag(base_button).then((inp) => {
-            // Update button name
-            if (inp.length != 1) throw `Error: Expected 1 Base Sprite image, got ${inp.length} files.`;
-            base_button.textContent = `Base Sprite: ${inp[0].name}`;
-            base_button.disabled = true;
-            result_box.classList = "desc info_resp";
-            result_box.textContent = "Parsing base sprite ....";
-            return inp[0];
-        })
-        .then(parser.addBaseSprite.bind(parser))
-        .then(() => {
-            result_box.classList = "desc info_resp";
-            result_box.textContent = "Successfully parsed base sprite. Add other palette images to complete process.";
-            palette_button.disabled = false;
-        })
-        .catch((err) => {
-            base_button.disabled = false;
-            result_box.textContent = `${err}`;
-            result_box.classList = "desc error_resp";
-            console.error(err);
-        })
-        .finally(handleBaseInput); // Setup listening for new input on fail/success
-    }
-    function handlePaletteInput() {
+    input_handler.parser = parser;
+    input_handler.init();
 
-        handleClickOrDrag(palette_button).then((inp) => {
-            // Update button name
-            palette_button.disabled = true;
-            palette_button.textContent = `${inp.length} Palette Sprite(s)`;
-            result_box.classList = "desc info_resp";
-            result_box.textContent = "Parsing palette sprites ....";
-            return inp;
-        })
-        .then(parser.addPaletteSprites.bind(parser))
-        .then(() => {
-            parser.download();
-            result_box.classList = "desc success_resp";
-            result_box.textContent = "Successfully parsed palette from images";
-            base_button.disabled = false;
-            palette_button.disabled = true;
-            base_button.textContent = "Put Base Sprite Here";
-            palette_button.textContent = "Put Palette Sprites Here";
-        })
-        .catch((err) => {
-            palette_button.disabled = false;
-            result_box.textContent = `${err}`;
-            result_box.classList = "desc error_resp";
-            console.error(err);
-        })
-        .finally(handlePaletteInput); // Setup listening for new input on fail/success
-    }
-
-    palette_button.disabled = true;
-    handleBaseInput();
-    handlePaletteInput();
-
-    document.addEventListener("dragover", (e) => { e.preventDefault(); });
-    document.addEventListener("drop", async (e) => {
-        e.preventDefault();
-    });
+    document.addEventListener("dragover", e => e.preventDefault());
+    document.addEventListener("drop", async e => e.preventDefault());
 });
 
 /**

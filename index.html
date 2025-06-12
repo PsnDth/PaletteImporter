@@ -32,15 +32,38 @@
     <h1>Image Palette Importer</h1>
     <div class="desc">
         <h2>Instructions</h2>
+        <p> This tool can be used for roughly 3 use cases:</p>
+        <ol>
+            <li>Converting palette images to a Fraymakers palette file</li>
+            <li>Adding these palette images to an existing Fraymakers palette file</li>
+            <li>Combining Fraymakers palette files</li>
+        </ol>
+        <p>Can perform all the operations simultaneously</p>
         <p>
-            To use this, you need a base/colour mapped image, and then a series of identical images with a different palettes applied <br>
-            The tool will generate a palette file for Fraytools, when opened you can set the ID and set the reference image to be the base image <br>
-            By default, the unmapped image is set as the base palette, you may want to either delete it and/or set a different base palette
+            To convert palette images, you need a base/colour mapped image, and then a series of identical images with a different palettes applied <br>
+            If generating a new palette file, it will need an ID and reference image before being used.<br>
+            By default, the first image is set as the base palette, you may want to set a different base palette<br>
+        </p>
+        <p>
+            <b>Tip:</b> You can drag files onto the buttons instead of clicking them.
         </p>
     </div>
-    <button id="start_base_sprite">Put Base Sprite Here</button>
-    <button id="start_palette_sprite">Put Palette Sprites Here</button>
-    <p class="desc" id="result"></p>
+    <div class="options">
+        <div>
+            <button id="start_palette_file">Target Palette File: N/A</button>
+            <button id="start_palette_ext">Additional Palette Files: N/A</button>
+        </div>
+        <div class="desc result" id="palette_file_status"></div>
+    </div>
+    <div class="options">
+        <div>
+            <button id="start_base_sprite">Base Sprite: N/A</button>
+            <button id="start_palette_sprite">Palette Sprites: N/A</button>
+        </div>
+        <div class="desc result" id="palette_image_status"></div>
+    </div>
+    <button class="export" id="export"><span class="material-symbols-sharp">download</span>Export</button>
+    <p class="desc result" id="result"></p>
 </body>
 
 </html>

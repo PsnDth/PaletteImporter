@@ -502,7 +502,7 @@ class InputHandler {
                 // Update button name
                 if (inp.length != 1) throw `Error: Expected 1 Base Sprite image, got ${inp.length} files.`;
                 this.base_sprite_button.textContent = `Base Sprite: ${inp[0].name}`;
-                clearWarnings(result_box);
+                InputHandler.clearWarnings(result_box);
                 result_box.classList = "desc info_resp";
                 result_box.textContent = "Parsing base sprite ....";
                 return inp[0];

@@ -18,7 +18,7 @@ class ColorParser {
     }
 
     static RGBAtoARGBHex(r, g, b, a) {
-        var colorHex = 0;
+        let colorHex = 0;
         for (const comp of [a, r, g, b]) {
             colorHex *= 256;
             colorHex += comp;
@@ -146,7 +146,30 @@ class PaletteParser {
         this.palette_image_files = [];
         this.base_palette_json_file = null;
         this.palette_json_files = [];
+        this.warnings_cache = [];
+        this.warned_colors = [];
         this.reset();
+    }
+
+    renderWarnings() {
+        let warnings = [];
+        for (const warning of this.warnings_cache) {
+            const warning_span = document.createElement('span');
+            warning_span.classList.add("warning");
+            warning_span.textContent = `WARNING: ${warning}`;
+            warnings.push(warning_span);
+            console.log(warning_span);
+        }
+        this.warnings_cache = [];
+        this.warned_colors = [];
+        return warnings;
+    }
+
+    tryWarnFor(src_color, dst_color, warning) {
+        const warning_key = JSON.stringify([src_color, dst_color]);
+        if (this.warned_colors.includes(warning_key)) return;
+        this.warnings_cache.push(warning);
+        this.warned_colors.push(warning_key);
     }
 
     reset() {
@@ -188,7 +211,7 @@ class PaletteParser {
     }
 
     addPaletteSafely(name, palette) {
-            var copy_idx = 0;
+        let copy_idx = 0;
         while (this.palettes.has(PaletteParser.getPaletteCopyName(name, copy_idx))) {
             copy_idx += 1;
         }
@@ -219,7 +242,7 @@ class PaletteParser {
 
     async addPaletteFile(fhandle, is_base = false) {
        const palette_json = await this.loadPaletteFile(fhandle);
-       var old_colors = new Map(this.colors);
+       let old_colors = new Map(this.colors);
        if (is_base) this.colors.clear();
        for (const color_json of palette_json.colors) {
            const color_info = ColorInfo.fromJSON(color_json);
@@ -232,7 +255,7 @@ class PaletteParser {
             this.colors.set(color, color_info);
         }
 
-        var old_palettes = new Map(this.palettes);
+        let old_palettes = new Map(this.palettes);
         // Add the base palettes first
         if (is_base) this.palettes.clear();
         for (const palette_map_json of palette_json.maps) {
@@ -307,26 +330,27 @@ class PaletteParser {
             }
 
             const dst_pixels = img.bitmap.data;
-            let found_err = false;
             let curr_palette = new Map();
             img.scan(0, 0, img.bitmap.width, img.bitmap.height, (x, y, i) => {
-                if (found_err) return;
                 if (dst_pixels[i+ColorDims.ALPHA] == 0) return; // Ignore transparent pixels
                 const src_color = this.base_image[i/4];
                 const dst_color = ColorParser.RGBAtoARGBHex(...dst_pixels.slice(i, i+4));
                 if (src_color === undefined || !this.colors.has(src_color)) {
-                    reject(`Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map transparent/unmapped colour to RGBA(${new ColorParser(dst_color).rgba})`);
-                    found_err = true;
+                    this.tryWarnFor(
+                        src_color, dst_color,
+                        `Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map transparent/unmapped colour to RGBA(${new ColorParser(dst_color).rgba})`
+                    );
                     return;
                 }
                 if (curr_palette.has(src_color) && curr_palette.get(src_color) != dst_color) {
-                    reject(`Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map RGBA(${new ColorParser(src_color).rgba}) to RGBA(${new ColorParser(dst_color).rgba}). Previously mapped to RGBA(${new ColorParser(curr_palette.get(src_color)).rgba})`);
-                    found_err = true;
+                    this.tryWarnFor(
+                        src_color, dst_color,
+                        `Found conflicting colour in file "${name}". @(${x}, ${y}) Trying to map RGBA(${new ColorParser(src_color).rgba}) to RGBA(${new ColorParser(dst_color).rgba}). Previously mapped to RGBA(${new ColorParser(curr_palette.get(src_color)).rgba})`
+                    );
                     return;
                 }
                 curr_palette.set(src_color, dst_color);
             });
-            if (found_err) return;
             const palette_info = new PaletteInfo(name);
             palette_info.map = curr_palette;
             this.addPaletteSafely(name, palette_info);
@@ -417,6 +441,20 @@ class InputHandler {
         // Allow user interaction again
     }
 
+    static clearWarnings(result_box) {
+        let warnings = result_box.querySelectorAll('.warning');
+        for (const warning of warnings) {
+            result_box.removeChild(warning);
+        }
+    }
+
+    renderWarnings(result_box) {
+        InputHandler.clearWarnings(result_box);
+        for (const warning of this.parser.renderWarnings()) {
+            result_box.appendChild(warning);
+        }
+    }
+
 
 
     checkEnableExport() {
@@ -427,7 +465,7 @@ class InputHandler {
     }
 
     static async getDraggedItems(items) {
-        var entries = [];
+        let entries = [];
         for (const item of items) {
             if (item.kind != "file") throw "Error: Dragged input was not a file, expecting image file(s)";
             const entry = await item.getAsFileSystemHandle(); 
@@ -464,6 +502,7 @@ class InputHandler {
                 // Update button name
                 if (inp.length != 1) throw `Error: Expected 1 Base Sprite image, got ${inp.length} files.`;
                 this.base_sprite_button.textContent = `Base Sprite: ${inp[0].name}`;
+                clearWarnings(result_box);
                 result_box.classList = "desc info_resp";
                 result_box.textContent = "Parsing base sprite ....";
                 return inp[0];
@@ -478,7 +517,12 @@ class InputHandler {
             .then(() => {
                 this.checkEnableExport();
                 result_box.classList = "desc info_resp";
-                result_box.textContent = "Successfully parsed base sprite. Add other palette images to complete process.";
+                let result_text = "Successfully parsed base sprite.";
+                if (!this.parser.palette_image_files.length) {
+                    result_text += " Add other palette images to complete process.";
+                }
+                result_box.textContent = result_text;
+                this.renderWarnings(result_box);
                 this.base_sprite_button.disabled = false;
                 this.palette_sprite_button.disabled = false;
             })
@@ -486,6 +530,7 @@ class InputHandler {
                 this.checkEnableExport();
                 this.base_sprite_button.disabled = false;
                 result_box.textContent = `${err}`;
+                InputHandler.clearWarnings(result_box);
                 result_box.classList = "desc error_resp";
                 console.error(err);
             })
@@ -497,6 +542,7 @@ class InputHandler {
                 this.palette_sprite_button.textContent = `${inp.length} Palette Sprite(s)`;
                 result_box.classList = "desc info_resp";
                 result_box.textContent = "Parsing palette sprites ....";
+                InputHandler.clearWarnings(result_box);
                 // before actually adding them,  reset the parser if necessary
                 return inp;
             })
@@ -512,12 +558,14 @@ class InputHandler {
             .then(() => {
                 this.checkEnableExport();
                 result_box.classList = "desc success_resp";
-                result_box.textContent = "Successfully parsed palette from images";
+                result_box.textContent = `Successfully parsed palette from images.`;
+                this.renderWarnings(result_box);
             })
             .catch((err) => {
                 this.checkEnableExport();
                 this.palette_sprite_button.disabled = false;
                 result_box.textContent = `${err}`;
+                InputHandler.clearWarnings(result_box);
                 result_box.classList = "desc error_resp";
                 console.error(err);
             })
@@ -538,6 +586,7 @@ class InputHandler {
                 this.palette_file_button.textContent = `Target Palette: ${inp[0].name}`;
                 result_box.classList = "desc info_resp";
                 result_box.textContent = "Parsing target palette file ....";
+                InputHandler.clearWarnings(result_box);
                 return inp[0];
             })
             .then(fh => {
@@ -551,10 +600,12 @@ class InputHandler {
                 this.checkEnableExport();
                 result_box.classList = "desc success_resp";
                 result_box.textContent = "Successfully parsed target palette file";
+                this.renderWarnings(result_box);
             })
             .catch((err) => {
                 this.checkEnableExport();
                 result_box.textContent = `${err}`;
+                InputHandler.clearWarnings(result_box);
                 result_box.classList = "desc error_resp";
                 console.error(err);
             })
@@ -565,6 +616,7 @@ class InputHandler {
                 this.palette_ext_button.textContent = `${inp.length} Palette File(s)`;
                 result_box.classList = "desc info_resp";
                 result_box.textContent = "Parsing palette files ....";
+                InputHandler.clearWarnings(result_box);
                 // before actually adding them,  reset the parser if necessary
                 return inp;
             })
@@ -581,10 +633,12 @@ class InputHandler {
                 this.checkEnableExport();
                 result_box.classList = "desc success_resp";
                 result_box.textContent = "Successfully parsed palettes from provided files";
+                this.renderWarnings(result_box);
             })
             .catch((err) => {
                 this.checkEnableExport();
                 result_box.textContent = `${err}`;
+                InputHandler.clearWarnings(result_box);
                 result_box.classList = "desc error_resp";
                 console.error(err);
             })

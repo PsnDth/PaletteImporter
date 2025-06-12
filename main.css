@@ -188,6 +188,11 @@ button:disabled {
   color: #00c853;
 }
 
+.warning {
+  color: #e0bf00;
+  display: block;
+}
+
 .error_resp {
   color: rgb(243, 108, 108);
 }

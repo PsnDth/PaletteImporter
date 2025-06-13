@@ -151,6 +151,11 @@ class PaletteParser {
         this.reset();
     }
 
+    clearWarnings() {
+        this.warnings_cache = [];
+        this.warned_colors = [];
+    }
+
     renderWarnings() {
         let warnings = [];
         for (const warning of this.warnings_cache) {
@@ -160,8 +165,7 @@ class PaletteParser {
             warnings.push(warning_span);
             console.log(warning_span);
         }
-        this.warnings_cache = [];
-        this.warned_colors = [];
+        this.clearWarnings();
         return warnings;
     }
 
@@ -202,6 +206,7 @@ class PaletteParser {
             if (this.palette_image_files.length) await this.addPaletteSprites(this.palette_image_files);
         }
         if (this.palette_json_files.length) await this.addPaletteFiles(this.palette_json_files);
+        this.clearWarnings(); // Don't repost warnings from previous errors
     }
 
     static getPaletteCopyName(name, copy_idx) {
@@ -241,13 +246,16 @@ class PaletteParser {
     }
 
     async addPaletteFile(fhandle, is_base = false) {
-       const palette_json = await this.loadPaletteFile(fhandle);
-       let old_colors = new Map(this.colors);
-       if (is_base) this.colors.clear();
-       for (const color_json of palette_json.colors) {
-           const color_info = ColorInfo.fromJSON(color_json);
-           if (this.colors.has(color_info.color)) continue;
-           this.colors.set(color_info.color, color_info);
+        const palette_json = await this.loadPaletteFile(fhandle);
+        if (!('colors' in palette_json && 'maps' in palette_json)) {
+            throw `${fhandle.name} is not a valid FrayTools .costumes file.`;
+        }
+        let old_colors = new Map(this.colors);
+        if (is_base) this.colors.clear();
+        for (const color_json of palette_json.colors) {
+            const color_info = ColorInfo.fromJSON(color_json);
+            if (this.colors.has(color_info.color)) continue;
+            this.colors.set(color_info.color, color_info);
         }
         // readd the old colors
         for (const [color, color_info] of old_colors.entries()) {
